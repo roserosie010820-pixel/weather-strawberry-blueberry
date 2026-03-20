@@ -886,270 +886,7 @@ function getPhenology(now){
   return items;
 }
 
-/* ===== FETCH API ===== */
-async function fetchAll(){
-  const wxUrl='https://api.open-meteo.com/v1/forecast'
-    +'?latitude='+LAT+'&longitude='+LON
-    +'&hourly=temperature_2m,apparent_temperature,precipitation_probability,precipitation,relative_humidity_2m,weather_code,visibility,wind_speed_10m,wind_direction_10m,uv_index,surface_pressure,cloud_cover,dew_point_2m,wind_gusts_10m,shortwave_radiation'
-    +'&daily=temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,weather_code,precipitation_sum,precipitation_probability_max,wind_speed_10m_max'
-    +'&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m,precipitation,visibility,uv_index,surface_pressure,cloud_cover,wind_gusts_10m,is_day'
-    +'&timezone=Asia%2FShanghai&forecast_days=8';
 
-  const aqUrl='https://air-quality-api.open-meteo.com/v1/air-quality'
-    +'?latitude='+LAT+'&longitude='+LON
-    +'&current=pm2_5,pm10,carbon_monoxide,nitrogen_dioxide,ozone,european_aqi'
-    +'&timezone=Asia%2FShanghai';
-
-  const [wxRes,aqRes]=await Promise.allSettled([fetch(wxUrl),fetch(aqUrl)]);
-  const wx=wxRes.status==='fulfilled'?(await wxRes.value.json()):null;
-  const aq=aqRes.status==='fulfilled'?(await aqRes.value.json()):null;
-  return{wx,aq};
-}
-
-/* ===== CHART INSTANCES ===== */
-let charts={};
-function killCharts(){Object.values(charts).forEach(c=>c&&c.destroy());charts={};}
-const G='rgba(255,255,255,.04)',TC='#4a566e';
-Chart.defaults.color=TC;
-
-function mkCharts(h,si){
-  killCharts();
-  const n=24,sl=(a)=>a.slice(si,si+n);
-  const lbs=sl(h.time).map(t=>new Date(t).getHours()+':00');
-  const temps=sl(h.temperature_2m),feels=sl(h.apparent_temperature);
-  const prec=sl(h.precipitation),prob=sl(h.precipitation_probability),hum=sl(h.relative_humidity_2m);
-  const xs={x:{ticks:{color:TC,font:{size:7.5},maxTicksLimit:6},grid:{color:G}},y:{ticks:{color:TC,font:{size:7.5}},grid:{color:G}}};
-
-  charts.t=new Chart(document.getElementById('cTemp'),{type:'line',data:{labels:lbs,datasets:[
-    {label:'气温',data:temps,borderColor:'#f9706a',backgroundColor:'rgba(249,112,106,.07)',borderWidth:1.5,tension:.42,fill:true,pointRadius:0,pointHoverRadius:3},
-    {label:'体感',data:feels,borderColor:'#f9c055',borderWidth:1,borderDash:[4,4],tension:.42,fill:false,pointRadius:0,pointHoverRadius:3}
-  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{labels:{color:'#4a566e',font:{size:7.5},boxWidth:10}}},scales:xs}});
-
-  charts.r=new Chart(document.getElementById('cRain'),{data:{labels:lbs,datasets:[
-    {type:'bar',label:'降雨mm',data:prec,backgroundColor:'rgba(111,181,245,.28)',borderColor:'rgba(111,181,245,.5)',borderWidth:.5,yAxisID:'y',borderRadius:2},
-    {type:'line',label:'概率%',data:prob,borderColor:'#a78bfa',backgroundColor:'rgba(167,140,250,.07)',borderWidth:1.5,tension:.42,fill:true,pointRadius:0,pointHoverRadius:3,yAxisID:'y1'}
-  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{labels:{color:'#4a566e',font:{size:7.5},boxWidth:10}}},scales:{
-    x:{ticks:{color:TC,font:{size:7.5},maxTicksLimit:6},grid:{color:G}},
-    y:{ticks:{color:TC,font:{size:7.5},callback:v=>v+'mm'},grid:{color:G},position:'left'},
-    y1:{ticks:{color:TC,font:{size:7.5},callback:v=>v+'%'},grid:{drawOnChartArea:false},position:'right',min:0,max:100}
-  }}});
-
-  charts.h=new Chart(document.getElementById('cHumid'),{type:'line',data:{labels:lbs,datasets:[
-    {label:'湿度%',data:hum,borderColor:'#2fd4a0',backgroundColor:'rgba(47,212,160,.07)',borderWidth:1.5,tension:.42,fill:true,pointRadius:0,pointHoverRadius:3}
-  ]},options:{responsive:true,maintainAspectRatio:true,plugins:{legend:{labels:{color:'#4a566e',font:{size:7.5},boxWidth:10}}},scales:{...xs,y:{...xs.y,min:0,max:100}}}});
-}
-
-function mkTideChart(tides){
-  const ctx=document.getElementById('tideCurve');
-  if(charts.tide) charts.tide.destroy();
-  // Build smooth tide curve
-  const pts=[];
-  const hrs=[];
-  for(let h=0;h<24;h++){
-    hrs.push(pad(h)+':00');
-    const t=h;
-    let val=0;
-    tides.forEach(td=>{
-      const th=parseInt(td.time.split(':')[0]);
-      const amp=parseFloat(td.height)*0.5*(td.type==='高潮'?1:-1)+2;
-      val+=amp*Math.cos((t-th)*Math.PI/6.2);
-    });
-    pts.push(+(2+val*.4).toFixed(2));
-  }
-  charts.tide=new Chart(ctx,{type:'line',data:{labels:hrs,datasets:[{
-    data:pts,borderColor:'rgba(111,181,245,.8)',backgroundColor:'rgba(111,181,245,.1)',
-    borderWidth:1.5,tension:.4,fill:true,pointRadius:0
-  }]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{
-    x:{ticks:{color:TC,font:{size:7},maxTicksLimit:8},grid:{color:G}},
-    y:{ticks:{color:TC,font:{size:7},callback:v=>v+'m'},grid:{color:G}}
-  }}});
-}
-
-function mkSunArc(sunTimes,now){
-  const ctx=document.getElementById('sunArc');
-  if(charts.sun) charts.sun.destroy();
-  const sr=parseFloat(sunTimes.sunrise.split(':')[0])+parseFloat(sunTimes.sunrise.split(':')[1])/60;
-  const ss=parseFloat(sunTimes.sunset.split(':')[0])+parseFloat(sunTimes.sunset.split(':')[1])/60;
-  const nowH=now.getHours()+now.getMinutes()/60;
-  const pts=[];const lbs=[];
-  for(let h=0;h<=24;h++){
-    lbs.push(h%6===0?pad(h)+':00':'');
-    if(h<sr||h>ss){pts.push(null);}
-    else{const prog=(h-sr)/(ss-sr);pts.push(+(Math.sin(prog*Math.PI)*100).toFixed(1));}
-  }
-  const nowProg=nowH>sr&&nowH<ss?(nowH-sr)/(ss-sr):null;
-  charts.sun=new Chart(ctx,{type:'line',data:{labels:lbs,datasets:[{
-    data:pts,borderColor:'#f9c055',backgroundColor:'rgba(249,192,85,.12)',
-    borderWidth:2,tension:.4,fill:true,pointRadius:0,spanGaps:false
-  }]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},annotation:{}},scales:{
-    x:{ticks:{color:TC,font:{size:7},maxTicksLimit:5},grid:{color:G}},
-    y:{ticks:{color:TC,font:{size:7},callback:v=>v+'%'},grid:{color:G},min:0,max:110}
-  }}});
-}
-
-/* ===== HOURLY RENDER ===== */
-function mkHourly(h,si){
-  const wrap=document.getElementById('hourly');wrap.innerHTML='';
-  const now=new Date();
-  for(let i=si;i<si+24;i++){
-    const t=new Date(h.time[i]);
-    const isNow=t.getHours()===now.getHours()&&t.getDate()===now.getDate();
-    const el=document.createElement('div');
-    el.className='hp'+(isNow?' now':'');
-    el.innerHTML=`<div class="hp-t">${isNow?'现在':pad(t.getHours())+':00'}</div><div class="hp-i">${wi(h.weather_code[i])}</div><div class="hp-v">${Math.round(h.temperature_2m[i])}°</div><div class="hp-r">${h.precipitation_probability[i]}%☔</div>`;
-    wrap.appendChild(el);
-    if(isNow) setTimeout(()=>el.scrollIntoView({inline:'center',behavior:'smooth'}),400);
-  }
-}
-
-/* ===== 7-DAY FORECAST ===== */
-function mk7Day(daily,now){
-  const wrap=document.getElementById('forecast7');wrap.innerHTML='';
-  const todayStr=now.toDateString();
-  for(let i=0;i<Math.min(8,daily.time.length);i++){
-    const dt=new Date(daily.time[i]);
-    const isToday=dt.toDateString()===todayStr;
-    const dayNames=['日','一','二','三','四','五','六'];
-    const el=document.createElement('div');
-    el.className='fc-day'+(isToday?' today':'');
-    el.innerHTML=`<div class="fcd">${isToday?'今天':('周'+dayNames[dt.getDay()])}<br>${pad(dt.getMonth()+1)}/${pad(dt.getDate())}</div><div class="fci">${wi(daily.weather_code[i])}</div><div class="fch">${Math.round(daily.temperature_2m_max[i])}°</div><div class="fcl">${Math.round(daily.temperature_2m_min[i])}°</div><div class="fcp">☔${daily.precipitation_probability_max[i]}%</div>`;
-    wrap.appendChild(el);
-  }
-}
-
-/* ===== LIFE INDEX RENDER ===== */
-function mkLifeIndex(indices){
-  const grid=document.getElementById('liGrid');
-  grid.innerHTML=indices.map(x=>`<div class="li-item"><div class="li-ico">${x.ico}</div><div class="li-name">${x.name}</div><span class="li-lvl lvl-${x.lvl}">${x.text}</span></div>`).join('');
-}
-
-/* ===== DETAIL GRID ===== */
-function mkDetailGrid(cur,h,si,aq){
-  const items=[];
-  const dewpoint=cur.dew_point||Math.round(cur.temperature_2m-(100-cur.relative_humidity_2m)/5);
-  items.push({ico:'🌡️',lbl:'露点温度',val:dewpoint+'°C',sub:'空气水分凝结点'});
-  items.push({ico:'🌀',lbl:'气压',val:(cur.surface_pressure||1013).toFixed(0)+' hPa',sub:(cur.surface_pressure>1015?'高压晴好':'低压多云雨')});
-  items.push({ico:'☁️',lbl:'云量',val:(cur.cloud_cover||0)+'%',sub:(cur.cloud_cover>80?'阴天':cur.cloud_cover>40?'多云':'晴好')});
-  items.push({ico:'💧',lbl:'湿度',val:cur.relative_humidity_2m+'%',sub:(cur.relative_humidity_2m>80?'湿度偏高':cur.relative_humidity_2m<30?'干燥':'适宜')});
-  items.push({ico:'👁️',lbl:'能见度',val:(cur.visibility/1000).toFixed(1)+' km',sub:(cur.visibility>10000?'极好':cur.visibility>5000?'良好':'较差')});
-  items.push({ico:'💨',lbl:'阵风',val:Math.round(cur.wind_gusts_10m||cur.wind_speed_10m)+'km/h',sub:'最大风速'});
-  items.push({ico:'🌧️',lbl:'当前降水',val:(cur.precipitation||0).toFixed(1)+' mm',sub:'过去1小时'});
-  items.push({ico:'☀️',lbl:'UV指数',val:(cur.uv_index||0).toFixed(1),sub:cur.uv_index>=8?'极强防晒':cur.uv_index>=5?'较强':cur.uv_index>=2?'中等':'弱'});
-  if(aq&&aq.current){
-    items.push({ico:'🫁',lbl:'PM2.5',val:(aq.current.pm2_5||0).toFixed(0)+' μg',sub:aq.current.pm2_5<35?'优':'需注意'});
-    items.push({ico:'💨',lbl:'PM10',val:(aq.current.pm10||0).toFixed(0)+' μg',sub:aq.current.pm10<70?'良':'偏高'});
-    items.push({ico:'⚗️',lbl:'臭氧O₃',val:(aq.current.ozone||0).toFixed(0)+' μg',sub:'地面臭氧浓度'});
-    items.push({ico:'🏭',lbl:'NO₂',val:(aq.current.nitrogen_dioxide||0).toFixed(0)+' μg',sub:'二氧化氮'});
-  }
-  const now=new Date();
-  const solar=(h.shortwave_radiation&&h.shortwave_radiation[si+now.getHours()])||0;
-  items.push({ico:'🔆',lbl:'太阳辐射',val:solar.toFixed(0)+' W/m²',sub:solar>500?'强辐射':solar>200?'中等':'弱'});
-  const grid=document.getElementById('detailGrid');
-  grid.innerHTML=items.map(x=>`<div class="info-card"><div class="ic-ico">${x.ico}</div><div class="ic-lbl">${x.lbl}</div><div class="ic-val">${x.val}</div><div class="ic-sub">${x.sub}</div></div>`).join('');
-}
-
-/* ===== BERRY TIPS FUNCTIONS ===== */
-function sbTipsData(T,H,prec,prob,UV,W){
-  return{
-    watering:[
-      prec>15?{ico:'🚫',t:'今日停水',d:'降雨量超15mm，无需人工浇水。检查盆底托盘有无积水，草莓根系在积水中超1小时可能开始腐烂。'}:
-      prec>5?{ico:'⏸',t:'雨后缓浇',d:'今日有降雨（'+prec.toFixed(1)+'mm），暂缓浇水。用手指插入基质2cm感受湿度，表层偏干再补水。'}:
-      H>85?{ico:'💧',t:'减少浇水',d:'空气湿度过高（'+H+'%），基质水分蒸发慢，浇水间隔需拉长。盆土表层3cm干燥再补水。'}:
-      T>30?{ico:'🌊',t:'傍晚多浇',d:'高温蒸发量大，建议傍晚18:00后给一次透水。白天高温浇水会加速叶片蒸腾，造成水分压力。'}:
-      {ico:'💧',t:'正常补水',d:'每1~2天早晨浇一次，浇则浇透（水从底孔流出为准），下次浇水前确认表层稍干燥。'},
-      {ico:'🪣',t:'水质建议',d:'常州自来水pH约7~7.5，草莓最适pH 5.5~6.5。建议将自来水静置过夜（氯气挥发），或少量加入草莓专用酸性肥料，避免长期碱性水导致叶片黄化。'}
-    ],
-    light:[
-      UV>=8?{ico:'🌂',t:'强光遮护',d:'今日UV指数'+UV.toFixed(1)+'，建议架设50%遮阳网。盛果期防止果实日灼（表面发白发软），花期遮阴可减少蒸腾压力。'}:
-      UV<2?{ico:'💡',t:'需补光',d:'今日光照不足（UV '+UV.toFixed(1)+'），建议开启植物灯4~6小时。推荐红光660nm+蓝光450nm组合灯，以上午开灯为佳。'}:
-      {ico:'☀️',t:'充足光照',d:'光照良好（UV '+UV.toFixed(1)+'），保证6~8小时直射阳光。花期充足光照有助坐果，果期光照提高含糖量和花青素积累。'},
-      {ico:'🔄',t:'定期转盆',d:'每3~4天将盆旋转180°，使植株各方向均匀受光，避免单侧徒长。转盆时检查叶腋是否有侧芽，不留果的老株可摘除侧芽节省养分。'}
-    ],
-    temp:[
-      T>32?{ico:'🆘',t:'紧急降温',d:'超过32°C，立即移至北向阳台或室内散光处。叶面轻喷细雾水降温，但避免喷在花朵上。热伤表现为叶片萎蔫下垂。'}:
-      T>28?{ico:'🌡️',t:'遮阳防热',d:'气温偏高（'+Math.round(T)+'°C），用薄遮阳网过滤午后12~15点强光。根部温度超30°C会影响根系吸收功能。'}:
-      T<0?{ico:'❄️',t:'立即入室',d:'低于0°C，盆栽根系比地栽更易受冻。立即移入室内（≥5°C），花芽在-3°C以下会冻死。'}:
-      T<5?{ico:'🧥',t:'低温保温',d:'气温仅'+Math.round(T)+'°C，移至室内或用无纺布覆盖保温。减少浇水，低温下根系吸水慢，积水伤根风险高。'}:
-      T>=15&&T<=25?{ico:'✅',t:'最佳温度',d:'今日'+Math.round(T)+'°C处于草莓最适区间（15~25°C）。夜温10~15°C时坐果率最高，这段时期加强肥水管理效果最好。'}:
-      {ico:'🌡️',t:'温度尚可',d:'气温'+Math.round(T)+'°C，草莓可正常生长。昼夜温差超15°C时适当减少浇水，防止冷湿条件伤根。'},
-      {ico:'🌙',t:'昼夜温差',d:'常州春秋季昼夜温差大，草莓花芽分化需持续低温（夜温10~15°C维持2~3周）。花芽分化期傍晚可将盆移至稍凉处促进分化，提高来年开花量。'}
-    ],
-    disease:[
-      H>85?{ico:'🍄',t:'灰霉病警报',d:'湿度'+H+'%，极易发生灰霉病。症状：花瓣/果实出现灰褐色绒毛霉层。措施：立即加强通风，摘除贴地叶和病花，保持叶面干燥，禁止傍晚喷水。'}:
-      {ico:'👁',t:'日常检查',d:'每3天检查叶片背面和茎基部。早期发现白粉病迹象（白色粉末）、蚜虫（绿色小虫聚集）或红蜘蛛（叶面细小黄点）。发现1~2片病叶立即摘除，防止蔓延。'},
-      {ico:'🐌',t:'软体害虫',d:'雨后湿润天气注意蛞蝓和蜗牛，夜间啃食果实和叶片。在盆边撒一圈碎蛋壳或铜片阻挡，或傍晚巡查手动清除。花期特别注意保护。'}
-    ],
-    soil:[
-      {ico:'🌱',t:'基质配比',d:'推荐：草炭土50%+珍珠岩30%+腐叶土20%。保水透气性兼顾，避免纯营养土板结。每年春季换盆时更新基质，加入少量缓释肥打底。'},
-      {ico:'🧪',t:'施肥节奏',d:'营养期每10天一次均衡液肥（N:P:K=20:20:20）。现蕾起改高磷钾肥（10:30:20），促开花。结果期减氮防裂果，果实转色后停止施肥以保风味。'},
-      {ico:'♻️',t:'换盆时机',d:'根系从盆底孔伸出或浇水极快流走时需换盆。每1~2年春季换一次（大一号），检查根系颜色（白色健康，褐/黑色腐烂需剪除）。'}
-    ],
-    fruit:[
-      {ico:'🌸',t:'人工授粉',d:'阳台缺少昆虫，建议晴天上午10~12点用软毛笔轻触每朵花蕊，模拟蜜蜂传粉，重复2~3天。可显著提高坐果率和改善果形，防止产生畸形果。'},
-      {ico:'🍓',t:'疏花疏果',d:'每株保留3~5个主花序，剪除过密侧花序。单个花序中优先保留头花果，及时去除畸形果，集中养分使果实更饱满甜美。'},
-      {ico:'📅',t:'采摘时机',d:'整体（含萼片附近）深红色且轻触有弹性时采摘。不要等完全软烂，常温下草莓迅速腐烂。建议傍晚采摘后冷藏，24小时内食用口感最佳。'}
-    ],
-    protect:[
-      W>25?{ico:'💨',t:'防风固定',d:'今日风速'+Math.round(W)+'km/h，移至墙体遮挡处，用竹签支撑花茎，防止花梗在大风中折断。'}:
-      prob>65?{ico:'☔',t:'花期避雨',d:'降雨概率'+prob+'%，花期雨水直打花蕊阻碍花粉萌发，将开花盆栽移至有顶棚阳台内侧，等晴天再移出。'}:
-      {ico:'🛡️',t:'日常防护',d:'当前天气温和，无特殊防护需求。保持盆栽放置稳固，定期清理枯叶残花以减少病菌滋生源，做好日常巡查记录。'}
-    ]
-  };
-}
-
-function bbTipsData(T,H,prec,prob,UV,W){
-  return{
-    watering:[
-      prec>15?{ico:'🚫',t:'今日完全停水',d:'降雨超15mm，停止一切人工浇水。蓝莓细根极不耐涝，积水超2小时可能腐烂。检查底盘积水，若有立即倒掉。'}:
-      prec>5?{ico:'⏸',t:'雨后缓浇',d:'有降雨（'+prec.toFixed(1)+'mm），暂缓浇水。蓝莓比草莓更怕涝，基质微湿即可，表层2~3cm干燥再浇。从根部灌入，避免叶片带水过夜。'}:
-      T>30?{ico:'🌊',t:'早晚各一次',d:'高温期（'+Math.round(T)+'°C）蓝莓需水量大。建议清晨和傍晚各浇一次，使用pH 4.5~5.5弱酸水。午间绝对不浇，防止高温基质伤根。'}:
-      {ico:'💧',t:'弱酸水浇灌',d:'每次使用pH 4.5~5.5弱酸水，这是蓝莓存活的基础。推荐雨水收集（最佳），或每升自来水加约0.5ml白醋，用pH试纸验证后使用。'},
-      {ico:'🧴',t:'水质pH管理',d:'常州自来水pH 7~7.5（偏碱），长期使用会使基质碱化，导致叶片黄化（缺铁）。每3个月用硫磺粉或硫酸亚铁溶液灌根1次降低pH，按产品说明剂量使用。'}
-    ],
-    light:[
-      UV>=8?{ico:'☀️',t:'强光有益',d:'蓝莓耐强光比草莓强，UV '+UV.toFixed(1)+'无需遮阴。充足阳光有助花青素积累，使果实颜色更深、营养更丰富。'}:
-      UV<2?{ico:'💡',t:'补光必要',d:'光照严重不足（UV '+UV.toFixed(1)+'），用全光谱植物灯补充6~8小时，灯距顶部20~30cm。光不足会影响花芽分化和糖分积累。'}:
-      {ico:'☀️',t:'全天光照',d:'蓝莓全日照植物，每日需6小时以上直射阳光。光照不足导致枝条细弱、花芽减少、果实小而酸。朝南阳台最理想。'},
-      {ico:'🔄',t:'转盆促均衡',d:'每5天旋转盆90°，保证植株四面均匀受光。蓝莓株型较大，单侧受光会导致冠层偏斜。光照均匀也有助减少害虫在暗处藏匿。'}
-    ],
-    temp:[
-      T>35?{ico:'🆘',t:'高温胁迫',d:'超过35°C已超蓝莓耐热上限！立即移至阴凉处，叶面喷细雾水。盆面覆盖椰壳碎降低根区温度，高温下根系停止吸水会导致叶片焦边。'}:
-      T>28?{ico:'🌡️',t:'午后降温',d:'气温'+Math.round(T)+'°C偏高，盆面铺3~5cm椰糠或腐熟木屑降温保湿。根区温度高于30°C时，吸水和吸肥能力显著下降。'}:
-      T<-5?{ico:'❄️',t:'严寒入室',d:'气温'+Math.round(T)+'°C，盆栽根部在严寒中极易冻伤（比地栽脆弱得多）。立即移入≥-3°C室内，保弱光，每2~3周浇一次水，待春季萌芽再恢复正常。'}:
-      T<5?{ico:'🌿',t:'休眠期管理',d:'气温'+Math.round(T)+'°C，蓝莓进入/即将休眠。适当保持低温（0~7°C低温积累，需冷量600~1200小时）对来年开花结果非常重要。不要急于移入过暖环境。'}:
-      T>=15&&T<=28?{ico:'✅',t:'理想生长温度',d:'今日'+Math.round(T)+'°C处于蓝莓旺盛生长区间。花期最佳授粉温度18~24°C，果实膨大期25°C左右最佳。此阶段适当增施磷钾肥。'}:
-      {ico:'🌡️',t:'温度适宜',d:'气温'+Math.round(T)+'°C，维持正常管理。注意观察新叶颜色（嫩绿正常，发黄可能是缺铁或pH偏高），早发现早调整。'},
-      {ico:'❄️',t:'需冷量满足',d:'常州冬季12~2月提供足够低温积累（需冷量），是蓝莓来年正常开花的前提。不要在冬季将盆栽长期置于暖气旁，否则开花稀少甚至不开花。'}
-    ],
-    acidity:[
-      {ico:'🧪',t:'pH是生命线',d:'蓝莓必须在强酸性土壤（pH 4.5~5.5）中生长。建议购买pH笔（约30元），每月测量一次基质pH。超过5.8需用硫磺粉或酸性肥料调低。'},
-      {ico:'🪨',t:'专用基质',d:'推荐：草炭土（泥炭）60%+珍珠岩30%+松树皮10%。禁止使用普通营养土（pH通常7以上），蓝莓种下后数月内即会黄化死亡。'},
-      {ico:'⚗️',t:'硫磺粉降pH',d:'pH超5.8时，在盆土表面撒施硫磺粉（约1g/升基质），浇水后微生物转化为硫酸降低pH，效果持续3~6个月。见效较慢（2~4周），是最安全的长效调酸方法。'}
-    ],
-    disease:[
-      H>85?{ico:'🍄',t:'病害警报',d:'湿度'+H+'%易引发灰霉病（花果腐烂）和枝枯病（枝条变褐枯死）。保持盆间距>30cm以利通风，减少叶片积水时间。发现枝枯病立即剪至健康组织1cm以下。'}:
-      {ico:'👁',t:'叶色预警',d:'叶片发黄（叶脉绿叶肉黄）是缺铁典型症状，根本原因是pH偏高。出现此情况优先调低pH，再补充螯合铁肥（EDTA铁）。单纯补铁不调pH无效。'},
-      {ico:'🐛',t:'害虫识别',d:'注意果蝇（产卵于成熟果实内）、蓟马（新叶卷曲变形）。果实上发现小孔或早烂，检查是否有虫卵。用黄色粘虫板监测果蝇数量，必要时套袋保护果穗。'}
-    ],
-    soil:[
-      {ico:'🌱',t:'换盆指南',d:'2~3年换一次盆。换盆时机：根系从底孔伸出或生长势明显减弱。换盆用比原盆大一号的深盆（≥40cm深），蓝莓根系向下生长，深度比宽度更重要。'},
-      {ico:'🧪',t:'施肥方案',d:'使用蓝莓专用肥（硫酸铵为氮源）或杜鹃/映山红专用肥。生长期（4~8月）每月施一次，用量按说明减半（宁少勿多）。禁用普通复合肥，氯离子和碱性成分伤根。'},
-      {ico:'🪵',t:'覆盖物三效',d:'盆面覆盖松树皮碎（5cm厚）：保湿+调酸（松树皮分解产生有机酸）+降低夏季根区温度。每年补充一次，是家庭种蓝莓最省心的辅助材料。'}
-    ],
-    fruit:[
-      {ico:'🌸',t:'授粉技巧',d:'蓝莓自花结实率低，强烈建议同时种2个以上不同品种互相授粉（如奥尼尔+蓝雨+粉蓝），坐果率提升3~5倍。阳台无蜜蜂时用软毛笔在花间轻扫模拟授粉。'},
-      {ico:'🫐',t:'采摘最佳期',d:'果实由绿→红→蓝紫，变色后不要急采。等深蓝紫色、萼片皱缩且轻触即脱落时风味最佳。过早采摘酸涩，过晚则口感绵软失去脆度。'},
-      {ico:'✂️',t:'修剪促产',d:'每年冬季休眠期（12~1月）修剪：剪去3年以上老枝（皮色深褐粗糙），保留1~3年生中间颜色枝条作为结果枝。老枝更新修剪是蓝莓持续高产的关键。'}
-    ],
-    protect:[
-      W>25?{ico:'💨',t:'防风保护',d:'今日风速'+Math.round(W)+'km/h，蓝莓株型较高较重，大风易倾倒。将盆移至墙角或用绳固定至栏杆，防止被风吹倒损伤枝干。'}:
-      prob>65?{ico:'☔',t:'避雨建议',d:'降雨概率'+prob+'%，蓝莓花期（3~4月）若遭遇冷雨浸泡3天以上，容易出现花朵腐烂、坐果率大幅下降，建议移至有顶盖处。'}:
-      {ico:'🛡️',t:'当前无特殊防护',d:'今日天气对蓝莓友好，维持正常管理。利用好天气将盆栽移至阳光最充足处，积累光合产物。顺手清理盆面落叶，避免病菌滋生。'}
-    ]
-  };
-}
-
-function renderBerryTips(wrapId,tipsObj){
 function renderBerryTips(wrapId,tipsObj){
   const catNames={watering:'💧 浇水管理',light:'☀️ 光照管理',temp:'🌡️ 温度管理',acidity:'🧪 酸碱度',disease:'🌿 病虫害防治',soil:'🪴 基质施肥',fruit:'🍇 开花结果',protect:'🛡️ 防护建议'};
   let html='';
@@ -1162,6 +899,105 @@ function renderBerryTips(wrapId,tipsObj){
     html+=`</div></div>`;
   }
   document.getElementById(wrapId).innerHTML=html;
+}
+
+function sbTipsData(T,H,prec,prob,UV,W){
+  return{
+    watering:[
+      prec>15?{ico:'🚫',t:'今日停水',d:'降雨量超15mm，无需人工浇水。检查盆底托盘有无积水，草莓根系在积水中超1小时可能腐烂。'}:
+      prec>5?{ico:'⏸',t:'雨后缓浇',d:'今日有降雨（'+prec.toFixed(1)+'mm），暂缓浇水。用手指插入基质2cm感受湿度，表层偏干再补水。'}:
+      H>85?{ico:'💧',t:'减少浇水',d:'空气湿度过高（'+H+'%），基质水分蒸发慢，浇水间隔需拉长。盆土表层3cm干燥再补水。'}:
+      T>30?{ico:'🌊',t:'傍晚多浇',d:'高温蒸发量大，建议傍晚18:00后给一次透水。白天高温浇水会加速叶片蒸腾，造成水分压力。'}:
+      {ico:'💧',t:'正常补水',d:'每1~2天早晨浇一次，浇则浇透（水从底孔流出为准），下次浇水前确认表层稍干燥。'},
+      {ico:'🪣',t:'水质建议',d:'草莓最适pH 5.5~6.5。建议将自来水静置过夜（氯气挥发），长期碱性水会导致叶片黄化。'}
+    ],
+    light:[
+      UV>=8?{ico:'🌂',t:'强光遮护',d:'UV指数'+UV.toFixed(1)+'，建议架设50%遮阳网。盛果期防止果实日灼，花期遮阴可减少蒸腾压力。'}:
+      UV<2?{ico:'💡',t:'需补光',d:'光照不足（UV '+UV.toFixed(1)+'），建议开启植物灯4~6小时。推荐红光660nm+蓝光450nm组合灯，以上午开灯为佳。'}:
+      {ico:'☀️',t:'充足光照',d:'光照良好，保证6~8小时直射阳光。花期光照有助坐果，果期光照提高含糖量。'},
+      {ico:'🔄',t:'定期转盆',d:'每3~4天将盆旋转180°，使植株各方向均匀受光，避免单侧徒长。转盆时顺手检查叶腋侧芽。'}
+    ],
+    temp:[
+      T>32?{ico:'🆘',t:'紧急降温',d:'超过32°C，立即移至北向阳台或室内散光处。叶面轻喷细雾水降温，避免喷在花朵上。'}:
+      T>28?{ico:'🌡️',t:'遮阳防热',d:'气温偏高（'+Math.round(T)+'°C），用薄遮阳网过滤午后强光。根部温度超30°C会影响根系吸收。'}:
+      T<0?{ico:'❄️',t:'立即入室',d:'低于0°C，盆栽根系比地栽更易受冻。立即移入室内（≥5°C），花芽在-3°C以下会冻死。'}:
+      T<5?{ico:'🧥',t:'低温保温',d:'气温仅'+Math.round(T)+'°C，移至室内或用无纺布覆盖保温。减少浇水，低温下积水伤根风险高。'}:
+      T>=15&&T<=25?{ico:'✅',t:'最佳温度',d:'今日'+Math.round(T)+'°C处于草莓最适区间（15~25°C）。夜温10~15°C时坐果率最高，这段时期加强肥水管理效果最好。'}:
+      {ico:'🌡️',t:'温度尚可',d:'气温'+Math.round(T)+'°C，草莓可正常生长。昼夜温差超15°C时适当减少浇水，防止冷湿条件伤根。'},
+      {ico:'🌙',t:'昼夜温差',d:'草莓花芽分化需持续低温（夜温10~15°C维持2~3周）。花芽分化期傍晚可将盆移至稍凉处促进分化，提高来年开花量。'}
+    ],
+    disease:[
+      H>85?{ico:'🍄',t:'灰霉病警报',d:'湿度'+H+'%，极易发生灰霉病。立即加强通风，摘除贴地叶和病花，保持叶面干燥，禁止傍晚喷水。'}:
+      {ico:'👁',t:'日常检查',d:'每3天检查叶片背面和茎基部。早期发现白粉病（白色粉末）、蚜虫（绿色小虫）或红蜘蛛（细小黄点）立即处理。'},
+      {ico:'🐌',t:'软体害虫',d:'雨后注意蛞蝓和蜗牛，夜间啃食果实和叶片。在盆边撒碎蛋壳或铜片阻挡，或傍晚巡查手动清除。'}
+    ],
+    soil:[
+      {ico:'🌱',t:'基质配比',d:'推荐：草炭土50%+珍珠岩30%+腐叶土20%。保水透气性兼顾，避免纯营养土板结积水。每年春季换盆时更新基质。'},
+      {ico:'🧪',t:'施肥节奏',d:'营养期每10天一次均衡液肥（N:P:K=20:20:20）。现蕾起改高磷钾肥（10:30:20），促开花。结果期减氮防裂果。'}
+    ],
+    fruit:[
+      {ico:'🌸',t:'人工授粉',d:'阳台缺少昆虫，建议晴天上午10~12点用软毛笔轻触每朵花蕊，模拟蜜蜂传粉，重复2~3天。可显著提高坐果率。'},
+      {ico:'🍓',t:'疏花疏果',d:'每株保留3~5个主花序，剪除过密侧花序。单花序中优先保留头花果，及时去除畸形果，集中养分使果实更饱满。'},
+      {ico:'📅',t:'采摘时机',d:'整体深红色且轻触有弹性时采摘。常温下草莓迅速腐烂，建议傍晚采摘后冷藏，24小时内食用口感最佳。'}
+    ],
+    protect:[
+      W>25?{ico:'💨',t:'防风固定',d:'今日风速'+Math.round(W)+'km/h，移至墙体遮挡处，用竹签支撑花茎，防止花梗在大风中折断。'}:
+      prob>65?{ico:'☔',t:'花期避雨',d:'降雨概率'+prob+'%，花期雨水直打花蕊阻碍花粉萌发，将开花盆栽移至有顶棚阳台内侧。'}:
+      {ico:'🛡️',t:'日常防护',d:'当前天气温和，无特殊防护需求。定期清理枯叶残花以减少病菌滋生源，做好日常巡查记录。'}
+    ]
+  };
+}
+
+function bbTipsData(T,H,prec,prob,UV,W){
+  return{
+    watering:[
+      prec>15?{ico:'🚫',t:'今日完全停水',d:'降雨超15mm，停止一切人工浇水。蓝莓细根极不耐涝，积水超2小时可能腐烂。检查底盘积水立即倒掉。'}:
+      prec>5?{ico:'⏸',t:'雨后缓浇',d:'有降雨（'+prec.toFixed(1)+'mm），暂缓浇水。蓝莓比草莓更怕涝，基质微湿即可，表层2~3cm干燥再浇。'}:
+      T>30?{ico:'🌊',t:'早晚各一次',d:'高温期（'+Math.round(T)+'°C）需水量大。建议清晨和傍晚各浇一次，使用pH 4.5~5.5弱酸水。午间绝对不浇。'}:
+      {ico:'💧',t:'弱酸水浇灌',d:'每次使用pH 4.5~5.5弱酸水，这是蓝莓存活的基础。推荐雨水收集，或每升自来水加约0.5ml白醋，用pH试纸验证后使用。'},
+      {ico:'🧴',t:'水质pH管理',d:'自来水通常偏碱（pH 7~8），长期使用会使基质碱化，导致叶片黄化（缺铁）。每3个月用硫磺粉灌根1次降低pH。'}
+    ],
+    light:[
+      UV>=8?{ico:'☀️',t:'强光有益',d:'蓝莓耐强光比草莓强，UV '+UV.toFixed(1)+'无需遮阴。充足阳光有助花青素积累，使果实颜色更深、营养更丰富。'}:
+      UV<2?{ico:'💡',t:'补光必要',d:'光照严重不足（UV '+UV.toFixed(1)+'），用全光谱植物灯补充6~8小时，灯距顶部20~30cm。光不足影响花芽分化。'}:
+      {ico:'☀️',t:'全天光照',d:'蓝莓需每日6小时以上直射阳光。光照不足导致枝条细弱、花芽减少、果实小而酸。朝南阳台最理想。'},
+      {ico:'🔄',t:'转盆促均衡',d:'每5天旋转盆90°，保证植株四面均匀受光。蓝莓株型较大，单侧受光会导致冠层偏斜，光照均匀也有助减少害虫藏匿。'}
+    ],
+    temp:[
+      T>35?{ico:'🆘',t:'高温胁迫',d:'超过35°C已超蓝莓耐热上限！立即移至阴凉处，叶面喷细雾水。盆面覆盖椰壳碎降低根区温度。'}:
+      T>28?{ico:'🌡️',t:'午后降温',d:'气温'+Math.round(T)+'°C偏高，盆面铺3~5cm椰糠降温保湿。根区温度高于30°C时，吸水和吸肥能力显著下降。'}:
+      T<-5?{ico:'❄️',t:'严寒入室',d:'气温'+Math.round(T)+'°C，盆栽根部在严寒中极易冻伤。立即移入≥-3°C室内，保弱光，每2~3周浇一次水。'}:
+      T<5?{ico:'🌿',t:'休眠期管理',d:'气温'+Math.round(T)+'°C，蓝莓进入/即将休眠。适当低温积累（0~7°C需冷量600~1200小时）对来年开花非常重要。'}:
+      T>=15&&T<=28?{ico:'✅',t:'理想生长温度',d:'今日'+Math.round(T)+'°C处于蓝莓旺盛生长区间。花期最佳授粉温度18~24°C，此阶段适当增施磷钾肥。'}:
+      {ico:'🌡️',t:'温度适宜',d:'气温'+Math.round(T)+'°C，维持正常管理。注意观察新叶颜色（嫩绿正常，发黄可能是缺铁或pH偏高）。'},
+      {ico:'❄️',t:'需冷量满足',d:'蓝莓需要冬季低温积累才能来年正常开花。不要在冬季将盆栽长期置于暖气旁，否则开花稀少甚至不开花。'}
+    ],
+    acidity:[
+      {ico:'🧪',t:'pH是生命线',d:'蓝莓必须在强酸性土壤（pH 4.5~5.5）中生长。建议购买pH笔（约30元），每月测量一次基质pH。超过5.8需用硫磺粉调低。'},
+      {ico:'🪨',t:'专用基质',d:'推荐：草炭土（泥炭）60%+珍珠岩30%+松树皮10%。禁止使用普通营养土（pH通常7以上），蓝莓种下后数月内即会黄化死亡。'},
+      {ico:'⚗️',t:'硫磺粉降pH',d:'pH超5.8时，盆土表面撒硫磺粉（约1g/升基质），浇水后微生物转化为硫酸降低pH，效果持续3~6个月。见效较慢（2~4周）。'}
+    ],
+    disease:[
+      H>85?{ico:'🍄',t:'病害警报',d:'湿度'+H+'%易引发灰霉病和枝枯病。保持盆间距>30cm以利通风，减少叶片积水时间。发现枝枯病立即剪至健康组织1cm以下。'}:
+      {ico:'👁',t:'叶色预警',d:'叶片发黄（叶脉绿叶肉黄）是缺铁典型症状，根本原因是pH偏高。出现此情况优先调低pH，再补充螯合铁肥（EDTA铁）。'},
+      {ico:'🐛',t:'害虫识别',d:'注意果蝇（产卵于成熟果实内）、蓟马（新叶卷曲变形）。果实上发现小孔或早烂，检查是否有虫卵。可用黄色粘虫板监测。'}
+    ],
+    soil:[
+      {ico:'🌱',t:'换盆指南',d:'2~3年换一次盆。根系从底孔伸出或生长势明显减弱时换盆。换盆用比原盆大一号的深盆（≥40cm深），蓝莓根系向下生长。'},
+      {ico:'🧪',t:'施肥方案',d:'使用蓝莓专用肥（硫酸铵为氮源）或杜鹃专用肥。生长期（4~8月）每月施一次，用量按说明减半（宁少勿多）。禁用普通复合肥。'},
+      {ico:'🪵',t:'覆盖物三效',d:'盆面覆盖松树皮碎（5cm厚）：保湿+调酸（分解产生有机酸）+降低夏季根区温度。每年补充一次，是家庭种蓝莓最省心的方法。'}
+    ],
+    fruit:[
+      {ico:'🌸',t:'授粉技巧',d:'蓝莓自花结实率低，强烈建议同时种2个以上不同品种互相授粉（如奥尼尔+蓝雨+粉蓝），坐果率提升3~5倍。'},
+      {ico:'🫐',t:'采摘最佳期',d:'果实由绿→红→蓝紫，等深蓝紫色、萼片皱缩且轻触即脱落时风味最佳。过早采摘酸涩，过晚则口感绵软失去脆度。'},
+      {ico:'✂️',t:'修剪促产',d:'每年冬季休眠期（12~1月）修剪：剪去3年以上老枝，保留1~3年生中间颜色枝条作为结果枝。老枝更新修剪是持续高产的关键。'}
+    ],
+    protect:[
+      W>25?{ico:'💨',t:'防风保护',d:'今日风速'+Math.round(W)+'km/h，蓝莓株型较高，大风易倾倒。将盆移至墙角或用绳固定至栏杆，防止被风吹倒损伤枝干。'}:
+      prob>65?{ico:'☔',t:'避雨建议',d:'降雨概率'+prob+'%，蓝莓花期若遭遇冷雨浸泡3天以上，容易出现花朵腐烂、坐果率大幅下降，建议移至有顶盖处。'}:
+      {ico:'🛡️',t:'当前无特殊防护',d:'今日天气对蓝莓友好，维持正常管理。利用好天气将盆栽移至阳光最充足处，积累光合产物。'}
+    ]
+  };
 }
 
 /* CHARTS */
